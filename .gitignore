@@ -1,0 +1,11 @@
+.reset-state/
+__pycache__/
+service.log
+service.err.log
+local.codex.banked-reset.plist
+build/
+dist/
+*.egg-info/
+
+docs/evidence/banked-reset-*.json
+.local-artifacts/
