@@ -1,4 +1,4 @@
-include README.md install.py
+include README.md install.py setup.py
 recursive-include tests *.py
 include docs/evidence/memory-measurements-refill.json
 include .github/workflows/ci.yml

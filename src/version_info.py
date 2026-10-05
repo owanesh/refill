@@ -16,10 +16,24 @@ def git(repo, *args):
 
 def metadata(source):
     revision = git(source, 'rev-parse', '--verify', 'HEAD')
+    if not revision:
+        try:
+            from _build_info import INFO
+            return dict(INFO)
+        except ImportError:
+            pass
     remotes = (git(source, 'remote') or '').splitlines()
     remote = 'origin' if 'origin' in remotes else remotes[0] if remotes else None
     return {'installedHash': revision, 'sourceRepo': str(source), 'remoteName': remote,
             'remoteUrl': git(source, 'remote', 'get-url', remote) if remote else None}
+
+
+def package_version():
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return 'v' + version('refill-cli') + ' (Git revision unknown)'
+    except PackageNotFoundError:
+        return 'Git revision unknown'
 
 
 def check(root):
@@ -27,9 +41,9 @@ def check(root):
     try:
         info = json.loads(path.read_text())
     except (OSError, ValueError):
-        return 'uncommitted', None
+        info = metadata(root)
     revision = info.get('installedHash')
-    label = revision[:8] if revision else 'uncommitted'
+    label = revision[:8] if revision else package_version()
     if not revision or not (info.get('remoteUrl') or (info.get('remoteName') and info.get('sourceRepo'))):
         return label, None
     output = git(root, 'ls-remote', '--exit-code', info['remoteUrl'], 'refs/heads/main') if info.get('remoteUrl') else git(info['sourceRepo'], 'ls-remote', '--exit-code', info['remoteName'], 'refs/heads/main')
