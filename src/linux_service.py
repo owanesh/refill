@@ -64,7 +64,7 @@ def render(root, codex, minutes, live):
     if live:
         command.append('--apply')
     text = (marker(root) + '\n[Unit]\nDescription=Refill banked reset check\n\n[Service]\nType=oneshot\n'
-            + 'WorkingDirectory=' + quote(root) + '\n'
+            + 'WorkingDirectory=' + str(root).replace('%', '%%') + '\n'
             + 'ExecStart=' + ' '.join(quote(arg, exec_arg=True) for arg in command) + '\n'
             + 'Environment=' + quote('PATH=' + os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin')) + '\n'
             + 'UMask=0077\nTimeoutStartSec=10min\n'

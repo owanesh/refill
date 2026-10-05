@@ -95,6 +95,11 @@ class LinuxTests(unittest.TestCase):
                 linux.install(self.root, '/fake/codex', 1, True)
         self.assertFalse(any(path.exists() for path in self.unit_paths))
 
+    def test_working_directory_is_a_scalar_path_without_shell_quotes(self):
+        text, _ = linux.render(self.root, '/fake/codex', 5, True)
+        line = next(line for line in text.splitlines() if line.startswith('WorkingDirectory='))
+        self.assertEqual(line, 'WorkingDirectory=' + str(self.root))
+
     def test_arguments_escape_systemd_expansions(self):
         self.assertEqual(linux.quote('/home/user %/$cash', exec_arg=True), '"/home/user %%/$$cash"')
         with self.assertRaises(ValueError):
