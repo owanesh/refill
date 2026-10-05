@@ -1,11 +1,13 @@
-<center>
-<img src="docs/refill_logo.svg" height="100px"><br>
-<a href="https://github.com/owanesh/refill/actions/workflows/ci.yml"><img src="https://github.com/owanesh/refill/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-<a href="https://github.com/owanesh/refill/actions/workflows/security.yml"><img src="https://github.com/owanesh/refill/actions/workflows/security.yml/badge.svg" alt="Security"></a>
-<br>
+<div align="center">
+  <img src="docs/refill_logo.svg" height="100px"> 
+  <p>
+    <a href="https://github.com/owanesh/refill/actions/workflows/ci.yml"><img src="https://github.com/owanesh/refill/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  </p>
+  <p>
+    A small macOS/Linux CLI that monitors Codex usage and automatically redeems available banked resets.
+  </p>
+</div>
 
-A small macOS/Linux CLI that monitors Codex usage and automatically redeems available banked resets.
-</center>
 
 ## Requirements
 
