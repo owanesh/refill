@@ -38,6 +38,8 @@ def monitor():
     settings = read()
     field('Check interval', f"{settings['interval_minutes']} minutes")
     field('Reset expiry check', f"{settings['wait_minutes']} minutes")
+    field('Quota threshold', f"{settings['quota_threshold']:g}% remaining")
+    field('Weekly reset wait', f"{settings['weekly_reset_days']:g} days")
     exit_code = job['exit_code']
     field('Last run', 'Successful' if exit_code == '0' else f'Exit code {exit_code}' if exit_code else 'Not recorded')
     path = ROOT / '.reset-state' / 'state.json'
@@ -93,9 +95,11 @@ def main():
     commands.add_parser('start', help='Install and start automatic redemption')
     commands.add_parser('stop', help='Stop the service; keep the CLI and data')
     commands.add_parser('clean', help='Uninstall refill, including state and logs')
-    config = commands.add_parser('config', help='Show or set the banked reset expiry threshold')
+    config = commands.add_parser('config', help='Show or set reset policy and check interval')
     config.add_argument('--expiry-minutes', '--wait-minutes', dest='wait_minutes', type=int, help='Redeem an available reset when it expires within this many minutes')
     config.add_argument('--interval-minutes', type=int, help='Run periodic checks every N minutes (minimum: 1)')
+    config.add_argument('--quota-threshold', type=int, help='Redeem at or below this remaining quota percentage (integer 0-100; default: 0)')
+    config.add_argument('--weekly-reset-days', type=float, help='Wait if the weekly reset is within this many days (default: 1; 0 disables waiting)')
     now = commands.add_parser('now', help='Redeem a banked reset immediately')
     now.add_argument('--force', action='store_true', required=True, help='Authorize immediate redemption')
     args = parser.parse_args()
@@ -112,7 +116,7 @@ def main():
         return 0 if ready else 1
     if args.command == 'config':
         from refill_config import configure
-        return configure(args.wait_minutes, args.interval_minutes)
+        return configure(args.wait_minutes, args.interval_minutes, args.quota_threshold, args.weekly_reset_days)
     if args.command == 'update':
         from updater import update
         return update(ROOT, tool=UPDATE_MANAGER() if UPDATE_MANAGER else None)

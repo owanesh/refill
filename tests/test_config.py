@@ -53,7 +53,7 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch('refill_config.path', return_value=Path(tmp) / 'config.json'), patch('service.set_interval') as apply:
             refill_config.configure(60, 1)
             refill_config.configure(interval_minutes=10)
-            self.assertEqual(refill_config.read(), {'wait_minutes': 60, 'interval_minutes': 10})
+            self.assertEqual(refill_config.read(), {'wait_minutes': 60, 'interval_minutes': 10, 'quota_threshold': 0, 'weekly_reset_days': 1})
             self.assertEqual(apply.call_args.args, (10,))
             for invalid in (0, -1):
                 with self.assertRaises(ValueError):

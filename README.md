@@ -85,60 +85,83 @@ refill start
 This enables an immediate check and then periodic checks every five minutes by default (configurable). 
 It **may redeem a reset during the initial check** if the policy is satisfied.
 
-The automatic policy redeems the earliest-expiring eligible reset when quota is exhausted **or** that reset expires within the configured threshold (30 minutes by default). 
-It can therefore redeem while quota is still available, including while you are idle. 
-The threshold refers to the banked credit's expiry, not the next natural quota reset.
+Refill selects the earliest-expiring eligible banked reset. It first checks whether
+that credit is about to expire; otherwise it waits for a nearby weekly reset,
+then checks the remaining quota threshold. Account/workspace safety checks and
+the one-hour automatic redemption cooldown always apply.
 
 ## When a reset is triggered
 
+<details>
+<summary>View the reset decision flow</summary>
+  
 ```mermaid
-flowchart LR
+flowchart TD
     A[refill start] --> B{Banked reset available?}
-    B -- Yes --> C{Expired quota?}
-    C -- Yes --> R[Use reset!]
-    C -- No --> D{Reset expires<br/>in N minutes?}
-    D -- Yes --> R
-    B & D -- No --> W[wait]
+    B -- No --> W[Wait]
+    B -- Yes --> C{Expires within N minutes?}
+    C -- Yes --> R[Use banked reset]
+    C -- No --> D{Weekly reset within K days?}
+    D -- Yes --> W
+    D -- No --> E{Remaining quota ≤ threshold?}
+    E -- Yes --> R
+    E -- No --> W
 ```
+  
+</details>
 
-“Expired Quota" means the server reports the usage limit reached or a Codex usage window reaches 100%. These are two signals for the same decision.
 
 ## Commands
 
 | Command | Behavior |
 | --- | --- |
 | `refill status` | One line: installed, active, installed Git hash, update availability. |
-| `refill config [--expiry-minutes N] [--interval-minutes M]` | Show or set expiry threshold (default: 30 min) and check interval (default: 5 min). |
-| `refill monitor` | Read-only service diagnostics, configured expiry threshold, live usage and banked resets. |
+| `refill config [options]` | Show or change the reset policy and check interval. |
+| `refill monitor` | Read-only service diagnostics, all policy settings, live usage and banked resets. |
 | `refill start` | Install and start automatic redemption, including login startup. |
 | `refill stop` | Stop the service and remove startup configuration; preserve CLI and data. |
 | `refill clean` | Stop and uninstall refill, including runtime state and logs. For uv/pipx installations it also invokes the owning tool manager. |
 | `refill now --force` | Attempt to redeem one eligible reset immediately, even before quota exhaustion. |
 
-Set the threshold without starting the service:
+Configuration is saved in `~/.local/share/refill/config.json` on both platforms.
+It survives stop/start, reinstalls and updates; `clean` removes it.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--expiry-minutes N` | `30` | Use a banked reset expiring within N minutes, even with quota remaining or a nearby weekly reset. `0` disables this trigger. |
+| `--weekly-reset-days K` | `1` | Otherwise wait if the weekly reset is within K × 24 hours. `1` means the next 24 hours, not the next calendar date; `0` disables waiting. Decimal days are supported: `0.5` = 12 hours, `0.55` = 13 hours 12 minutes. |
+| `--quota-threshold P` | `0` | Otherwise use a banked when any Codex window has P% or less remaining. `0` waits for exhaustion; `1` allows activation at 1% remaining. Use whole percentages from 0 to 100; decimal quota precision is currently unavailable from Codex. |
+| `--interval-minutes M` | `5` | Check every M minutes (positive integer). Changing it reloads an active service; a stopped service stays stopped. |
 
 ```sh
-refill config                      # Show the current threshold
-refill config --expiry-minutes 60   # Redeem available resets expiring within 60 min
-refill config --interval-minutes 1  # Check every minute
-refill config --interval-minutes 10 # Check every ten minutes
+refill config                                      # Show all settings
+refill config --quota-threshold 1 --weekly-reset-days 2
+refill config --weekly-reset-days 0.5              # Wait for a weekly reset within 12 hours
+refill config --expiry-minutes 60 --interval-minutes 1
 ```
 
-The interval is a positive integer in minutes and is managed by `launchd` on macOS or a `systemd` user timer on Linux.
-Changing it reloads an active service and may trigger an immediate check/redemption;
-_a stopped service stays stopped._ 
-Both settings can be changed in one command and are displayed in `monitor`. 
-Periodic checks require an awake computer and may be delayed by sleep or an already running check.
+Days can be decimal: `0.5` means 12 hours and `0.55` means 13 hours and 12 minutes.
+The quota threshold must be a whole number from 0 to 100. Codex does not provide
+decimal quota values. A threshold of `1` includes exactly 1% remaining.
 
-`now --force` can consume a reset and change the next weekly reset date. 
-It does not bypass workspace restrictions or invent reset credits.
-An ambiguous pending attempt is reconciled using its original idempotency key. 
-Repeated intentional invocations can consume additional credits when the server finds eligible usage to reset.
+With the default settings, Refill waits if your quota is empty but the weekly
+reset is within the next 24 hours. It still uses a banked reset if that credit
+expires within 30 minutes. If Refill cannot determine when the weekly reset is,
+it waits; set `--weekly-reset-days 0` to disable this waiting rule.
 
-Dates use the computer's current OS timezone, including future daylight-saving rules, formatted `DD.MM.YY HH:MM:SS`. 
+New settings take effect at the next check. Use `refill monitor` to see them.
+Your computer must be awake for checks to run. `--wait-minutes` is another name
+for `--expiry-minutes`.
+
+`refill now --force` attempts to use a banked reset immediately, ignoring these
+thresholds and the one-hour cooldown. Account and workspace restrictions still
+apply. Using a reset may change your next weekly reset date. Running this command
+again may consume another credit. If a previous attempt has an uncertain result,
+Refill checks that attempt again before starting a new one.
 
 
-## Updating and uninstalling
+
+## Uninstalling
 
 For manual package-manager removal, stop/remove service data before removing the CLI environment:
 
@@ -149,28 +172,6 @@ refill clean
 ```
 Do not remove a tool environment while a configured service still references its Python runtime.
 
-Git checks compare the installed commit with remote `main` using `git ls-remote`.
-
-## Tests and operational details
-
-```sh
-PYTHONPATH=src python3 -m unittest discover -s tests -v
-```
-
-The tests use a fake RPC server and do not launch Codex or consume real resets.
-`monitor` is always read-only. 
-A real end-to-end redemption cannot be verified without actually using an eligible reset.
-
-Runtime files are in `~/.local/share/refill`; macOS uses a LaunchAgent in
-`~/Library/LaunchAgents`, and Linux uses systemd user units as described above. 
-Private `.reset-state/` contains account metadata and retry keys, not login tokens.
-Logs are `service.log` and `service.err.log`; 
-
-A lock prevents overlapping redemptions. Account changes block redemption. 
-A successful automatic redemption without confirmed restored access blocks further new redemptions pending manual review.
-Never delete pending state to force a new attempt. `clean` removes `refill` data, not the source checkout or Codex credentials.
-
- 
 
 > [!NOTE]  
 > Codex's “Allow Codex to use resets” setting requires you to explicitly request a reset in a conversation and have 10% or less quota remaining; **it does not use resets automatically**. 

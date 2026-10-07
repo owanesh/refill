@@ -18,7 +18,7 @@ def snapshot():
         "ordinaryUsageAllowed": False,
         "rateLimitsByLimitId": {"codex": {
             "limitId": "codex", "rateLimitReachedType": "rate_limit_reached",
-            "primary": {"usedPercent": 100, "windowDurationMins": 10080, "resetsAt": now+7200}}},
+            "primary": {"usedPercent": 100, "windowDurationMins": 10080, "resetsAt": now+172800}}},
         "rateLimitResetCredits": {"availableCount": 2, "credits": [
             {"id": "FAKE-LATER", "status": "available", "resetType": "codexRateLimits", "expiresAt": now+9000},
             {"id": "FAKE-FIRST", "status": "available", "resetType": "codexRateLimits", "expiresAt": now+8000}]}}
@@ -84,10 +84,10 @@ class ResetTests(unittest.TestCase):
         self.execute("--apply")
         self.assertEqual(self.rpc.consumes(), [])
 
-    def test_exhausted_quota_redeems_even_if_natural_reset_is_near(self):
+    def test_exhausted_quota_waits_if_weekly_reset_is_near(self):
         self.rpc.data["rateLimitsByLimitId"]["codex"]["primary"]["resetsAt"] = time.time()+60
         self.execute("--demand", "--apply")
-        self.assertEqual(len(self.rpc.consumes()), 1)
+        self.assertEqual(self.rpc.consumes(), [])
 
     def test_exhaustion_signal_does_not_require_separate_permission_flag(self):
         self.rpc.data["ordinaryUsageAllowed"] = None
@@ -110,6 +110,21 @@ class ResetTests(unittest.TestCase):
         bucket['primary']['usedPercent'] = 50
         self.execute('--demand', '--apply', '--expiry-minutes', '60')
         self.assertEqual(self.rpc.consumes(), [])
+
+    def test_configured_one_percent_activation_end_to_end(self):
+        self.rpc.data['ordinaryUsageAllowed'] = True
+        bucket = self.rpc.data['rateLimitsByLimitId']['codex']
+        bucket['rateLimitReachedType'] = None
+        bucket['primary']['usedPercent'] = 99
+        self.execute('--demand', '--apply', '--quota-threshold', '1', '--weekly-reset-days', '1')
+        self.assertEqual(len(self.rpc.consumes()), 1)
+
+    def test_expiry_priority_over_near_weekly_reset_end_to_end(self):
+        bucket = self.rpc.data['rateLimitsByLimitId']['codex']
+        bucket['primary']['resetsAt'] = time.time()+3600
+        self.rpc.data['rateLimitResetCredits']['credits'][1]['expiresAt'] = time.time()+600
+        self.execute('--demand', '--apply')
+        self.assertEqual(self.rpc.consumes()[0]['creditId'], 'FAKE-FIRST')
 
     def test_workspace_limit(self):
         self.rpc.data["rateLimitsByLimitId"]["codex"]["rateLimitReachedType"] = "workspace_owner_usage_limit_reached"
@@ -202,12 +217,15 @@ class CLITests(unittest.TestCase):
         import service
         from types import SimpleNamespace
         rpc = FakeRPC(snapshot())
-        with tempfile.TemporaryDirectory() as directory, patch.object(cli, 'ROOT', Path(directory)), patch.object(service, 'PLIST', Path(directory)/'absent.plist'), patch.object(service, 'status_info', return_value={'active': False, 'configured': False, 'exit_code': None}), patch.object(app, 'RPC', return_value=rpc), patch.object(cli.shutil, 'which', return_value='fake-codex'), patch.object(cli, 'installed', return_value=True), patch('refill_config.read', return_value={'wait_minutes': 60, 'interval_minutes': 10}), patch('sys.stdout', new_callable=io.StringIO) as output:
+        with tempfile.TemporaryDirectory() as directory, patch.object(cli, 'ROOT', Path(directory)), patch.object(service, 'PLIST', Path(directory)/'absent.plist'), patch.object(service, 'status_info', return_value={'active': False, 'configured': False, 'exit_code': None}), patch.object(app, 'RPC', return_value=rpc), patch.object(cli.shutil, 'which', return_value='fake-codex'), patch.object(cli, 'installed', return_value=True), patch('refill_config.read', return_value={'wait_minutes': 60, 'interval_minutes': 10, 'quota_threshold': 1, 'weekly_reset_days': 1}), patch('sys.stdout', new_callable=io.StringIO) as output:
             self.assertEqual(cli.monitor(), 0)
             self.assertIn('Reset expiry check', output.getvalue())
             self.assertIn('60 minutes', output.getvalue())
             self.assertIn('Check interval', output.getvalue())
             self.assertIn('10 minutes', output.getvalue())
+            self.assertIn('Quota threshold', output.getvalue())
+            self.assertIn('1% remaining', output.getvalue())
+            self.assertIn('Weekly reset wait', output.getvalue())
         self.assertEqual(rpc.consumes(), [])
 
     def test_clean_removes_only_verified_installation(self):

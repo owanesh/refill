@@ -128,15 +128,24 @@ def policy(snapshot, args, now):
         return credit, "Immediate redemption explicitly requested."
     if not args.demand:
         return None, "No explicit demand for usage (--demand)."
-    windows = [bucket[k] for k in ("primary", "secondary") if bucket.get(k)]
-    exhausted = (bucket.get("rateLimitReachedType") == "rate_limit_reached"
-                 or any(w.get("usedPercent", 0) >= 100 for w in windows))
-    if exhausted:
-        return credit, "Quota exhausted; redeem an available reset."
     expiry = credit.get("expiresAt")
     if expiry is not None and 0 < expiry - now <= args.wait_minutes * 60:
         return credit, "An available reset expires within the configured threshold; redeem before expiry."
-    return None, "Quota remains and no available reset expires within the configured threshold."
+    windows = [bucket[k] for k in ("primary", "secondary") if bucket.get(k)]
+    days = getattr(args, 'weekly_reset_days', 1)
+    if days > 0:
+        weekly = [w for w in windows if w.get('windowDurationMins') == 10080]
+        if not weekly or any(w.get('resetsAt') is None or w['resetsAt'] <= now for w in weekly):
+            return None, "Weekly reset time unknown; wait rather than consume a banked reset."
+        if any(w['resetsAt'] - now <= days * 86400 for w in weekly):
+            return None, "Weekly reset is within the configured wait period; preserve the banked reset."
+    threshold = getattr(args, 'quota_threshold', 0)
+    low_quota = (bucket.get('rateLimitReachedType') == 'rate_limit_reached'
+                 or any(isinstance(w.get('usedPercent'), (int, float))
+                        and w['usedPercent'] >= 100 - threshold for w in windows))
+    if low_quota:
+        return credit, "Remaining quota is at or below the configured threshold; redeem an available reset."
+    return None, "Quota remains above the threshold and no banked reset is near expiry."
 
 
 def report(snapshot):
@@ -188,14 +197,21 @@ def main():
     parser.add_argument("--force", action="store_true", help="Redeem before the quota is exhausted")
     parser.add_argument("--demand", action="store_true", help="The caller requests Codex usage now")
     parser.add_argument("--expiry-minutes", "--wait-minutes", dest="wait_minutes", type=int, default=None, help="Redeem an available reset this many minutes before its expiry")
+    parser.add_argument("--quota-threshold", type=int, default=None)
+    parser.add_argument("--weekly-reset-days", type=float, default=None)
     parser.add_argument("--notify", action="store_true", help="Local macOS notifications")
     parser.add_argument("--state-dir", type=Path, default=Path(__file__).resolve().parent / ".reset-state")
     args = parser.parse_args()
-    if args.wait_minutes is None:
-        from refill_config import read
-        args.wait_minutes = read()['wait_minutes']
-    if args.wait_minutes < 0:
-        parser.error("--wait-minutes must be >= 0")
+    from refill_config import read, validate
+    settings = read()
+    for name in ('wait_minutes', 'quota_threshold', 'weekly_reset_days'):
+        if getattr(args, name) is None:
+            setattr(args, name, settings[name])
+        settings[name] = getattr(args, name)
+    try:
+        validate(settings)
+    except ValueError as error:
+        parser.error(str(error))
     os.umask(0o077)
     args.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     state_path = args.state_dir / "state.json"
