@@ -18,11 +18,17 @@ def color(value, code="36"):
     return value
 
 
+def brand():
+    """Six letters in the logo palette; plain text when colors are disabled."""
+    palette = ('38b6ff', 'ffc2c2', 'ffcd1a', '73be00', 'e2a9f1', 'ff5757')
+    return ''.join(color(letter, '1;38;2;' + ';'.join(str(int(rgb[i:i+2], 16))
+                   for i in (0, 2, 4))) for letter, rgb in zip('refill', palette))
+
+
 def heading(title, subtitle=None):
-    print(color("refill", "1;36") + "  /  " + plain(title))
+    print(brand() + " / " + plain(title))
     if subtitle:
         print(plain(subtitle))
-    print()
 
 
 def section(title, detail=None):
@@ -31,7 +37,7 @@ def section(title, detail=None):
 
 
 def field(label, value, tone=None):
-    print(f"  {label:<20} {color(value, tone) if tone else plain(value)}")
+    print(f"  {label:<18} {color(value, tone) if tone else plain(value)}")
 
 
 def flag(value, yes="Enabled", no="Disabled"):

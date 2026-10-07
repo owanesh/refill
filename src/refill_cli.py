@@ -36,10 +36,6 @@ def monitor():
     field('Automatic resets', flag(configured and loaded))
     from refill_config import read
     settings = read()
-    field('Check interval', f"{settings['interval_minutes']} minutes")
-    field('Reset expiry check', f"{settings['wait_minutes']} minutes")
-    field('Quota threshold', f"{settings['quota_threshold']:g}% remaining")
-    field('Weekly reset wait', f"{settings['weekly_reset_days']:g} days")
     exit_code = job['exit_code']
     field('Last run', 'Successful' if exit_code == '0' else f'Exit code {exit_code}' if exit_code else 'Not recorded')
     path = ROOT / '.reset-state' / 'state.json'
@@ -53,6 +49,11 @@ def monitor():
         field('Check freshness', 'Recent' if recent else 'Overdue' if checked else 'Awaiting first check',
               '32' if recent else '33')
     field('Safety block', flag(bool(state.get('halted')), 'Active', 'Clear'))
+    section('Config')
+    field('Check interval', f"{settings['interval_minutes']} minutes")
+    field('Reset expiry check', f"{settings['wait_minutes']} minutes")
+    field('Quota threshold', f"{settings['quota_threshold']:g}% remaining")
+    field('Weekly reset wait', f"{settings['weekly_reset_days']:g} days")
     codex = shutil.which('codex')
     if not codex:
         raise RuntimeError('Codex CLI not found')
@@ -105,13 +106,13 @@ def main():
     args = parser.parse_args()
     if args.command == 'status':
         from service import status_info
-        from terminal_ui import color
+        from terminal_ui import color, brand
         from version_info import check
         ready = installed()
         running = ready and status_info(ROOT)['active']
         revision, update = check(ROOT)
         mark = lambda value: color('✓', '32') if value is True else color('✗', '31') if value is False else color('?', '33')
-        print(f'refill | Installed: {mark(ready)} | Active: {mark(running)} | '
+        print(f'{brand()} | Installed: {mark(ready)} | Active: {mark(running)} | '
               f'{revision} | Update available: {mark(update)}')
         return 0 if ready else 1
     if args.command == 'config':
