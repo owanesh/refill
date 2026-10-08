@@ -47,3 +47,14 @@ class UpdateTests(unittest.TestCase):
                         else:
                             self.assertEqual('--no-start' in command, not active)
                         self.assertEqual(json.loads((root / '.version.json').read_text())['installedHash'], 'a'*40)
+
+    def test_update_keeps_notification_extra_for_uv_and_pipx(self):
+        for tool in ('uv', 'pipx'):
+            for enabled in (False, True):
+                with self.subTest(tool=tool, enabled=enabled), tempfile.TemporaryDirectory() as tmp:
+                    root=Path(tmp)/'.local/share/refill'
+                    root.mkdir(parents=True)
+                    with patch('updater.Path.home',return_value=Path(tmp)), patch('updater.notify_installed',return_value=enabled), patch('updater.shutil.which',return_value='/fake/manager'), patch('service.is_active',return_value=False), patch('updater.subprocess.run') as run:
+                        updater.install(Path('/fake/source'), {'installedHash':'a'*40}, tool)
+                    package=run.call_args_list[0].args[0][-1]
+                    self.assertEqual(package,'/fake/source'+('[notify]' if enabled else ''))

@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import uuid
+from release_info import __version__
 
 
 class RPC:
@@ -26,7 +27,7 @@ class RPC:
         threading.Thread(target=self._read, daemon=True).start()
         try:
             self.call("initialize", {"clientInfo": {
-                "name": "banked_reset_monitor", "version": "0.1.0"}})
+                "name": "banked_reset_monitor", "version": __version__}})
             self.send({"method": "initialized", "params": {}})
         except Exception:
             self.close()
@@ -89,13 +90,16 @@ def notify(message):
     elif sys.platform.startswith('linux') and shutil.which('notify-send'):
         command = [shutil.which('notify-send'), '--', 'refill', message]
     else:
-        return
+        return False
     try:
         result = subprocess.run(command, capture_output=True, timeout=10)
         if result.returncode:
             print('Warning: desktop notification failed; check the log.')
+            return False
+        return True
     except (OSError, subprocess.TimeoutExpired):
         print('Warning: desktop notification unavailable; check the log.')
+        return False
 
 
 def save(path, value):
@@ -248,6 +252,9 @@ def main():
                         notify("A banked reset expires at " + date(expiry))
                         notified.append(credit["id"])
                         save(state_path, state)
+            if args.notify and args.apply and args.demand:
+                from refill_notify import daily_summary
+                daily_summary(snapshot, settings, state, state_path, now)
             pending = state.get("pending")
             if pending:
                 print("Reconciling a previous redemption with the original retry key.")
@@ -300,8 +307,12 @@ def main():
                 if args.notify:
                     notify("Reset redeemed. Included usage allowed: "
                            + str(after.get("ordinaryUsageAllowed")))
+            redemption_key = pending['idempotencyKey']
             state.pop("pending", None)
             save(state_path, state)
+            if args.notify and outcome in ('reset', 'alreadyRedeemed'):
+                from refill_notify import reset_used
+                reset_used(after, settings, state, state_path, time.time(), redemption_key)
         finally:
             if rpc is not None:
                 rpc.close()

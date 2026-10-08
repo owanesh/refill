@@ -205,7 +205,7 @@ class CLITests(unittest.TestCase):
         from types import SimpleNamespace
         with patch.object(cli, 'installed', return_value=True), patch.object(service, 'status_info', return_value={'active': False, 'configured': False, 'exit_code': None}), patch.object(version_info, 'check', return_value=('12345678', False)), patch('sys.argv', ['refill', 'status']), patch('sys.stdout', new_callable=io.StringIO) as out, patch.object(cli.subprocess, 'call') as run:
             self.assertEqual(cli.main(), 0)
-            self.assertEqual(out.getvalue(), 'refill | Installed: ✓ | Active: ✗ | 12345678 | Update available: ✗\n')
+            self.assertEqual(out.getvalue(), 'refill | Installed: ✓ | Active: ✗ | v0.1.0 (12345678) | Update available: ✗\n')
             run.assert_not_called()
 
     def test_stop_never_calls_reset(self):

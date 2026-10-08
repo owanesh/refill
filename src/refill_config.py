@@ -22,6 +22,8 @@ def validate(value):
     if type(value['quota_threshold']) is not int or not 0 <= value['quota_threshold'] <= 100:
         raise ValueError('--quota-threshold must be an integer between 0 and 100')
 
+    from refill_notify.settings import validate as validate_notify
+    validate_notify(value)
 
 def read():
     defaults = {'wait_minutes': 30, 'interval_minutes': 5,
@@ -37,10 +39,14 @@ def read():
     return defaults
 
 
-def configure(minutes=None, interval_minutes=None, quota_threshold=None, weekly_reset_days=None):
+def configure(minutes=None, interval_minutes=None, quota_threshold=None, weekly_reset_days=None, **notification_changes):
     value = read()
     changes = {'wait_minutes': minutes, 'interval_minutes': interval_minutes,
                'quota_threshold': quota_threshold, 'weekly_reset_days': weekly_reset_days}
+    allowed = {'webhook_url', 'webhook_format', 'summary_prefix', 'daily_summary_time'}
+    if set(notification_changes) - allowed:
+        raise ValueError('Unknown notification setting')
+    changes.update(notification_changes)
     value.update({name: number for name, number in changes.items() if number is not None})
     validate(value)
     if any(number is not None for number in changes.values()):
@@ -65,4 +71,7 @@ def configure(minutes=None, interval_minutes=None, quota_threshold=None, weekly_
     print(f'Banked reset expiry threshold: {value["wait_minutes"]} minutes.')
     print(f'Remaining quota threshold: {value["quota_threshold"]:g}%.')
     print(f'Weekly reset wait: {value["weekly_reset_days"]:g} days.')
+    from refill_notify.settings import display
+    for label, text in display(value).items():
+        print(f'{label}: {text}')
     return 0

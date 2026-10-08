@@ -15,6 +15,17 @@ LAUNCHER = Path.home() / ".local" / "bin" / "refill"
 LEGACY = Path.home() / ".local" / "share" / "autoreset"
 
 
+def python_runtime():
+    current = Path(sys.executable)
+    if current.resolve() != (DESTINATION / 'Refill').resolve():
+        return str(current)
+    for candidate in (Path(sys.base_prefix) / 'bin' / f'python{sys.version_info.major}.{sys.version_info.minor}',
+                      Path(sys.base_prefix) / 'bin' / 'python3'):
+        if candidate.is_file() and candidate.resolve() != current.resolve():
+            return str(candidate)
+    raise RuntimeError('Original Python runtime not found; reinstall refill with uv or pipx.')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-start", action="store_true", help="Install without starting the service")
@@ -26,11 +37,11 @@ def main():
     preflight()  # Check prerequisites before stopping or changing an installation.
     print('Prerequisites: Codex CLI found; ChatGPT login verified.')
     runtime = DESTINATION / 'Refill'
-    old_launcher = "#!/bin/sh\nexec " + shlex.quote(sys.executable) + " " + shlex.quote(str(DESTINATION / "refill_cli.py")) + ' "$@"\n'
-    launcher_text = "#!/bin/sh\nexec env " + shlex.quote('PYTHONHOME=' + sys.base_prefix) + " " + shlex.quote(str(runtime)) + " " + shlex.quote(str(DESTINATION / "refill_cli.py")) + ' "$@"\n'
-    if sys.platform.startswith('linux'):
-        launcher_text = old_launcher
-    if not args.managed_cli and LAUNCHER.exists() and (LAUNCHER.is_symlink() or LAUNCHER.read_text() not in (launcher_text, old_launcher)):
+    interpreter = python_runtime()
+    launcher_text = "#!/bin/sh\nexec " + shlex.quote(interpreter) + " " + shlex.quote(str(DESTINATION / "refill_cli.py")) + ' "$@"\n'
+    legacy_direct = "#!/bin/sh\nexec " + shlex.quote(sys.executable) + " " + shlex.quote(str(DESTINATION / "refill_cli.py")) + ' "$@"\n'
+    old_launcher = "#!/bin/sh\nexec env " + shlex.quote('PYTHONHOME=' + sys.base_prefix) + " " + shlex.quote(str(runtime)) + " " + shlex.quote(str(DESTINATION / "refill_cli.py")) + ' "$@"\n'
+    if not args.managed_cli and LAUNCHER.exists() and (LAUNCHER.is_symlink() or LAUNCHER.read_text() not in (launcher_text, old_launcher, legacy_direct)):
         raise RuntimeError(f"A different command already exists: {LAUNCHER}")
     from service import PLIST, LABEL, DOMAIN
     if sys.platform.startswith('linux'):
@@ -49,10 +60,7 @@ def main():
         if result.returncode == 0:
             subprocess.run(["/bin/launchctl", "bootout", DOMAIN + "/" + LABEL], check=True)
     DESTINATION.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # A small copy of the interpreter executable gives macOS a genuine refill
-    # process name. Shared Python libraries remain in the existing installation.
-    if sys.platform == "darwin" and Path(sys.executable).resolve() != runtime.resolve():
-        shutil.copy2(sys.executable, runtime)
+    # Use the owning Python environment so optional dependencies stay importable.
     LAUNCHER.parent.mkdir(parents=True, exist_ok=True)
     # Preserve state from the previous workspace installation; lock out manual runs.
     previous = LEGACY if LEGACY.exists() else SOURCE
@@ -61,9 +69,13 @@ def main():
         with (source_state / "lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             shutil.copytree(source_state, DESTINATION / ".reset-state")
-    for name in ("banked_reset.py", "service.py", "refill_cli.py", "terminal_ui.py", "version_info.py", "account_info.py", "updater.py", "refill_config.py", "linux_service.py"):
+    for name in ("banked_reset.py", "service.py", "refill_cli.py", "terminal_ui.py", "version_info.py", "account_info.py", "updater.py", "refill_config.py", "linux_service.py", "release_info.py"):
         if (SOURCE / name).is_file():
             shutil.copy2(SOURCE / name, DESTINATION / name)
+    package = SOURCE / 'refill_notify'
+    if package.is_dir():
+        shutil.copytree(package, DESTINATION / 'refill_notify', dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     documentation = SOURCE.parent / 'README.md'
     if documentation.is_file():
         shutil.copy2(documentation, DESTINATION / 'README.md')
@@ -81,7 +93,9 @@ def main():
         elif PLIST.exists():
             PLIST.unlink()
     else:
-        subprocess.run([sys.executable, str(DESTINATION / "service.py"), "install", "--live"], check=True)
+        subprocess.run([interpreter, str(DESTINATION / "service.py"), "install", "--live"], check=True)
+    if runtime.is_file() and not runtime.is_symlink():
+        runtime.unlink()  # Remove the obsolete copied interpreter after successful installation.
     legacy_launcher = Path.home() / ".local" / "bin" / "autoreset"
     expected = "#!/bin/sh\nexec " + shlex.quote(sys.executable) + " " + shlex.quote(str(LEGACY / "autoreset_cli.py")) + ' "$@"\n'
     if legacy_launcher.is_file() and not legacy_launcher.is_symlink() and legacy_launcher.read_text() == expected:

@@ -54,6 +54,13 @@ def monitor():
     field('Reset expiry check', f"{settings['wait_minutes']} minutes")
     field('Quota threshold', f"{settings['quota_threshold']:g}% remaining")
     field('Weekly reset wait', f"{settings['weekly_reset_days']:g} days")
+    from refill_notify.settings import display
+    from refill_notify import available
+    section('Notifications')
+    field('System notifications', 'Enabled with service')
+    field('Web support', 'Available' if available() else 'Install [notify] extra')
+    for label, value in display(settings).items():
+        field(label, value)
     codex = shutil.which('codex')
     if not codex:
         raise RuntimeError('Codex CLI not found')
@@ -89,6 +96,8 @@ def clean():
 
 def main():
     parser = argparse.ArgumentParser(prog='refill', description=__doc__)
+    from release_info import __version__
+    parser.add_argument('--version', action='version', version=f'refill {__version__}')
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('monitor', help='Check service health, usage and banked resets (read-only)')
     commands.add_parser('status', help='Show whether refill is installed')
@@ -101,6 +110,14 @@ def main():
     config.add_argument('--interval-minutes', type=int, help='Run periodic checks every N minutes (minimum: 1)')
     config.add_argument('--quota-threshold', type=int, help='Redeem at or below this remaining quota percentage (integer 0-100; default: 0)')
     config.add_argument('--weekly-reset-days', type=float, help='Wait if the weekly reset is within this many days (default: 1; 0 disables waiting)')
+    config.add_argument('--webhook-url', help='HTTPS endpoint; empty string disables web notifications')
+    config.add_argument('--webhook-format', choices=['generic', 'discord', 'slack', 'ntfy'])
+    config.add_argument('--summary-prefix', help='Personal message before the notification (at most 500 characters)')
+    config.add_argument('--daily-summary-time', help='Daily summary local time HH:MM; empty string disables')
+    notifications = commands.add_parser('notify', help='Test web delivery or send a live read-only summary')
+    mode = notifications.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--test', action='store_true')
+    mode.add_argument('--summary', action='store_true')
     now = commands.add_parser('now', help='Redeem a banked reset immediately')
     now.add_argument('--force', action='store_true', required=True, help='Authorize immediate redemption')
     args = parser.parse_args()
@@ -113,11 +130,36 @@ def main():
         revision, update = check(ROOT)
         mark = lambda value: color('✓', '32') if value is True else color('✗', '31') if value is False else color('?', '33')
         print(f'{brand()} | Installed: {mark(ready)} | Active: {mark(running)} | '
-              f'{revision} | Update available: {mark(update)}')
+              f'v{__version__} ({revision}) | Update available: {mark(update)}')
         return 0 if ready else 1
     if args.command == 'config':
         from refill_config import configure
-        return configure(args.wait_minutes, args.interval_minutes, args.quota_threshold, args.weekly_reset_days)
+        return configure(args.wait_minutes, args.interval_minutes, args.quota_threshold, args.weekly_reset_days,
+                         webhook_url=args.webhook_url, webhook_format=args.webhook_format,
+                         summary_prefix=args.summary_prefix, daily_summary_time=args.daily_summary_time)
+    if args.command == 'notify':
+        from refill_config import read
+        from refill_notify import available, send
+        settings = read()
+        if not settings.get('webhook_url'):
+            parser.error('Configure --webhook-url and --webhook-format first')
+        if not available():
+            parser.error('Install refill with the [notify] extra first')
+        snapshot = {}
+        if args.summary:
+            from banked_reset import RPC
+            codex = shutil.which('codex')
+            if not codex:
+                parser.error('Codex CLI not found')
+            rpc = RPC(codex)
+            try:
+                snapshot = rpc.call('account/rateLimits/read')
+            finally:
+                rpc.close()
+        success = send(settings, snapshot, 'test' if args.test else 'daily_summary', time.time())
+        if success:
+            print('Web notification accepted by the destination.')
+        return 0 if success else 1
     if args.command == 'update':
         from updater import update
         return update(ROOT, tool=UPDATE_MANAGER() if UPDATE_MANAGER else None)

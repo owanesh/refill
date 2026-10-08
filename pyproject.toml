@@ -4,16 +4,29 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "refill-cli"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A macOS and Linux CLI for monitoring and redeeming banked Codex resets"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 classifiers = ["Operating System :: MacOS", "Operating System :: POSIX :: Linux", "Programming Language :: Python :: 3"]
 
+[project.optional-dependencies]
+notify = ["httpx>=0.28.1,<1"]
+
 [project.scripts]
 refill = "refill_entry:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["refill_entry", "refill_cli", "banked_reset", "service", "terminal_ui", "version_info", "installer", "account_info", "updater", "refill_config", "linux_service"]
+py-modules = ["refill_entry", "refill_cli", "banked_reset", "service", "terminal_ui", "version_info", "installer", "account_info", "updater", "refill_config", "linux_service", "release_info"]
+
+[tool.setuptools.dynamic]
+version = {attr = "release_info.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["refill_notify*"]
+
+[tool.setuptools.package-data]
+refill_notify = ["README.md", "assets/*"]

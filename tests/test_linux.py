@@ -159,3 +159,21 @@ class LinuxTests(unittest.TestCase):
         self.assertEqual(commands[0], ('systemctl', '--user', 'stop', 'refill.timer', 'refill.service'))
         self.assertFalse(any(unit.exists() for unit in self.unit_paths))
         self.assertTrue((self.root / 'linux_service.py').is_file())
+
+    def test_macos_service_uses_owning_interpreter_for_optional_dependencies(self):
+        import plistlib
+        with patch('sys.platform','darwin'), patch('service.ROOT',self.root), patch('service.shutil.which',return_value='/fake/codex'), patch('refill_config.read',return_value={'interval_minutes':5}), patch('sys.argv',['service.py','render','--live']), patch('sys.stdout',new_callable=io.StringIO):
+            service.main()
+        config=plistlib.loads((self.root/(service.LABEL+'.plist')).read_bytes())
+        self.assertEqual(config['ProgramArguments'][0],sys.executable)
+        self.assertNotIn('PYTHONHOME',config['EnvironmentVariables'])
+
+    def test_copied_interpreter_migration_selects_original_python(self):
+        old=self.root/'Refill'
+        old.touch()
+        base=Path(self.tmp.name)/'python'
+        original=base/'bin'/f'python{sys.version_info.major}.{sys.version_info.minor}'
+        original.parent.mkdir(parents=True)
+        original.touch()
+        with patch('installer.DESTINATION',self.root),patch('sys.executable',str(old)),patch('sys.base_prefix',str(base)):
+            self.assertEqual(installer.python_runtime(),str(original))

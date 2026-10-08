@@ -156,8 +156,7 @@ def main():
     if args.action == 'install':
         from account_info import preflight
         preflight()
-    runtime = ROOT / 'Refill'
-    interpreter = str(runtime) if runtime.is_file() else sys.executable
+    interpreter = sys.executable
     command = [interpreter, "-u", str(ROOT / "banked_reset.py"),
                "--codex", codex, "--demand", "--notify"]
     if args.live:
@@ -168,8 +167,7 @@ def main():
         "Label": LABEL,
         "ProgramArguments": command,
         "WorkingDirectory": str(ROOT),
-        "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "HOME": str(Path.home()),
-                                 **({'PYTHONHOME': sys.base_prefix} if runtime.is_file() else {})},
+        "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "HOME": str(Path.home())},
         "StartInterval": interval * 60,
         "RunAtLoad": True,
         "ProcessType": "Background",

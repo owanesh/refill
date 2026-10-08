@@ -9,6 +9,11 @@ import tempfile
 from version_info import git, metadata
 
 
+def notify_installed():
+    from refill_notify import available
+    return available()
+
+
 def update(root, tool=None):
     root = Path(root)
     try:
@@ -40,8 +45,9 @@ def install(checkout, info, tool):
         executable = shutil.which(tool)
         if not executable:
             raise RuntimeError(f'{tool} is required to update this installation.')
-        command = ([executable, 'tool', 'install', '--reinstall', str(checkout)] if tool == 'uv'
-                   else [executable, 'install', '--force', str(checkout)])
+        source = str(checkout) + ('[notify]' if notify_installed() else '')
+        command = ([executable, 'tool', 'install', '--reinstall', source] if tool == 'uv'
+                   else [executable, 'install', '--force', source])
         subprocess.run(command, check=True)
         script = 'from refill_entry import provision; provision(no_start=' + repr(not active) + ')'
         subprocess.run([sys.executable, '-c', script], cwd=str(checkout), check=True)
