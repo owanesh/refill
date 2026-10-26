@@ -5,6 +5,9 @@ from terminal_ui import local_zone
 
 
 def summary(snapshot, event, now, prefix=''):
+    if event == 'quota_increased':
+        from .events import QUOTA_INCREASE_MESSAGE
+        return (prefix + '\n\n' if prefix else '') + QUOTA_INCREASE_MESSAGE
     zone = local_zone()
     def date(value):
         if not isinstance(value, (int, float)) or not math.isfinite(value):

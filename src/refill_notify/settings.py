@@ -6,6 +6,8 @@ FORMATS = ('generic', 'discord', 'slack', 'ntfy')
 
 
 def validate(settings):
+    if type(settings.get('quota_boost', False)) is not bool:
+        raise ValueError('quota_boost must be a boolean')
     url = settings.get('webhook_url', '')
     if not isinstance(url, str):
         raise ValueError('--webhook-url must be a string')
@@ -34,5 +36,6 @@ def display(settings):
         'Web notifications': settings.get('webhook_format', 'generic') if settings.get('webhook_url') else 'Disabled',
         'Webhook URL': 'Configured (hidden)' if settings.get('webhook_url') else 'Not configured',
         'Daily summary': settings.get('daily_summary_time') or 'Disabled',
+        'Quota boost': 'On' if settings.get('quota_boost', False) else 'Off',
         'Summary prefix': 'Configured (hidden)' if settings.get('summary_prefix') else 'None',
     }

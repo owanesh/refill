@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from refill_notify.delivery import request, send
 from refill_notify.messages import summary
-from refill_notify.events import daily_summary, reset_used
+from refill_notify.events import daily_summary, reset_used, quota_increased, quota_observation, QUOTA_INCREASE_MESSAGE
 from refill_notify.settings import validate, display
 import refill_config
 from test_banked_reset import FakeRPC, snapshot
@@ -31,6 +31,7 @@ class NotificationTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name)/'state.json'
         self.settings = {'webhook_url': URL, 'webhook_format': 'discord', 'daily_summary_time': '09:00',
+                         'quota_boost': True,
                          'summary_prefix': 'Hello <@350584223284854784> @everyone <@&403197425633984523>'}
         self.data = snapshot()
         self.data['accountId'] = 'PRIVATE-ACCOUNT'
@@ -47,6 +48,131 @@ class NotificationTests(unittest.TestCase):
         self.assertNotIn('5-hour', message)
         for secret in ('PRIVATE-ACCOUNT', 'private@example.test', 'PRIVATE-TOKEN'):
             self.assertNotIn(secret, message)
+
+    def observe_quota(self, state, remaining, moment=None, count=2, **flags):
+        self.data['rateLimitsByLimitId']['codex']['primary']['usedPercent'] = 100 - remaining
+        self.data['rateLimitsByLimitId']['codex']['primary']['resetsAt'] = now() + 172800
+        self.data['rateLimitResetCredits']['availableCount'] = count
+        quota_increased(self.data, self.settings, state, self.path,
+                        now() if moment is None else moment, **flags)
+
+    def test_quota_increase_alerts_once_across_restart(self):
+        for before, after in ((80, 100), (50, 99), (98, 99)):
+            with self.subTest(before=before, after=after), patch('banked_reset.notify') as desktop, patch('refill_notify.events.send') as web:
+                state = {}
+                self.observe_quota(state, before)
+                desktop.assert_not_called()
+                self.observe_quota(state, after, now() + 60)
+                restored = json.loads(self.path.read_text())
+                self.observe_quota(restored, after, now() + 120)
+                desktop.assert_called_once_with(QUOTA_INCREASE_MESSAGE)
+                self.assertEqual(web.call_count, 1)
+                self.assertEqual(web.call_args.args[2], 'quota_increased')
+
+    def test_quota_decreases_and_changed_banked_count_are_silent(self):
+        for remaining, count in ((79, 2), (80, 2), (100, 1), (100, 3), (100, None)):
+            with self.subTest(remaining=remaining, count=count), patch('banked_reset.notify') as desktop, patch('refill_notify.events.send') as web:
+                state = {}
+                self.observe_quota(state, 80)
+                self.observe_quota(state, remaining, now() + 60, count=count)
+                desktop.assert_not_called()
+                web.assert_not_called()
+
+    def test_scheduled_rollover_and_own_pending_or_delayed_reset_are_silent(self):
+        for flags in ({'pending': {'creditId': 'fake'}}, {'halted': True}, {'rollover': True}, {'disabled': True}):
+            with self.subTest(flags=flags), patch('banked_reset.notify') as desktop, patch('refill_notify.events.send') as web:
+                state = {}
+                self.observe_quota(state, 50)
+                if flags.get('rollover'):
+                    state['quotaObservation']['resetsAt'] = now() + 60
+                else:
+                    state.update(flags)
+                self.observe_quota(state, 100, now() + 60, enabled=not flags.get('disabled'))
+                desktop.assert_not_called()
+                web.assert_not_called()
+
+    def test_unknown_weekly_quota_breaks_comparison(self):
+        for used in (None, float('nan'), float('inf'), -1, 101, True):
+            self.data['rateLimitsByLimitId']['codex']['primary']['usedPercent'] = used
+            self.assertIsNone(quota_observation(self.data, now()))
+        state = {}
+        with patch('banked_reset.notify') as desktop, patch('refill_notify.events.send'):
+            self.observe_quota(state, 80)
+            self.data['rateLimitsByLimitId']['codex']['primary']['windowDurationMins'] = 300
+            quota_increased(self.data, self.settings, state, self.path, now() + 60)
+            self.data['rateLimitsByLimitId']['codex']['primary']['windowDurationMins'] = 10080
+            self.observe_quota(state, 100, now() + 120)
+            desktop.assert_not_called()
+
+    def test_delayed_own_quota_update_is_suppressed_even_with_access_restored(self):
+        state = {}
+        with patch('banked_reset.notify') as desktop, patch('refill_notify.events.send') as web:
+            self.observe_quota(state, 50)
+            state['quotaResetAwaiting'] = dict(state['quotaObservation'])
+            self.observe_quota(state, 50, now() + 60)
+            self.observe_quota(state, 100, now() + 120)
+            self.assertNotIn('quotaResetAwaiting', state)
+            desktop.assert_not_called()
+            web.assert_not_called()
+
+    def test_quota_message_is_short_and_omits_account_data(self):
+        self.assertEqual(summary(self.data, 'quota_increased', now()), QUOTA_INCREASE_MESSAGE)
+
+    def test_quota_alerts_default_off_and_opt_out_discards_baseline(self):
+        from refill_notify.events import quota_after_redemption
+        for value in (None, False):
+            settings = dict(self.settings)
+            settings.pop('quota_boost')
+            if value is not None:
+                settings['quota_boost'] = value
+            state = {'quotaObservation': {'remaining': 50}, 'quotaResetAwaiting': {'remaining': 50}}
+            with patch('banked_reset.notify') as desktop, patch('refill_notify.events.send') as web:
+                quota_increased(self.data, settings, state, self.path, now())
+                quota_after_redemption(self.data, self.data, 'reset', settings, state, now())
+                self.assertNotIn('quotaObservation', state)
+                self.assertNotIn('quotaResetAwaiting', state)
+                desktop.assert_not_called()
+                web.assert_not_called()
+
+    def test_quota_alert_toggle_through_cli_preserves_other_settings(self):
+        import refill_cli
+        with patch('refill_config.path', return_value=self.path), patch('sys.stdout', new_callable=io.StringIO):
+            refill_config.configure(webhook_url=URL, daily_summary_time='09:00')
+            for mode, expected in (('on', True), ('off', False)):
+                with patch('sys.argv', ['refill', 'config', '--quota-boost', mode]), patch('service.set_interval') as schedule:
+                    self.assertEqual(refill_cli.main(), 0)
+                    schedule.assert_not_called()
+                settings = refill_config.read()
+                self.assertEqual(settings['quota_boost'], expected)
+                self.assertEqual(settings['webhook_url'], URL)
+                self.assertEqual(settings['daily_summary_time'], '09:00')
+                self.assertEqual(display(settings)['Quota boost'], 'On' if expected else 'Off')
+            with patch('sys.argv', ['refill', 'config']):
+                refill_cli.main()
+            self.assertFalse(refill_config.read()['quota_boost'])
+            for invalid in ('true', 1, None):
+                with self.assertRaises(ValueError):
+                    validate(dict(self.settings, quota_boost=invalid))
+
+    def test_daily_summary_once_during_repeated_dst_hour(self):
+        settings = dict(self.settings, daily_summary_time='02:30')
+        state = {}
+        zone = ZoneInfo('Europe/Rome')
+        with patch('refill_notify.events.send', return_value=True) as deliver:
+            for fold in (0, 1):
+                moment = datetime(2026, 10, 25, 2, 30, tzinfo=zone, fold=fold).timestamp()
+                daily_summary(self.data, settings, state, self.path, moment)
+            self.assertEqual(deliver.call_count, 1)
+
+    def test_daily_summary_after_skipped_dst_hour(self):
+        settings = dict(self.settings, daily_summary_time='02:30')
+        state = {}
+        zone = ZoneInfo('Europe/Rome')
+        with patch('refill_notify.events.send', return_value=True) as deliver:
+            for hour, minute in ((1, 59), (3, 0), (3, 5)):
+                moment = datetime(2026, 3, 29, hour, minute, tzinfo=zone).timestamp()
+                daily_summary(self.data, settings, state, self.path, moment)
+            self.assertEqual(deliver.call_count, 1)
 
     def test_available_windows_are_preserved_and_unknown_values_are_explicit(self):
         self.data['rateLimitsByLimitId']['codex']['secondary'] = {'usedPercent': 10, 'windowDurationMins': 300}
@@ -191,3 +317,34 @@ class NotificationTests(unittest.TestCase):
         state=json.loads((self.path.parent/'state.json').read_text())
         self.assertNotIn('pending',state)
         self.assertNotIn('lastResetNotification',state)
+
+    def test_service_detects_external_increase_and_rebases_own_redemption(self):
+        import banked_reset
+        rpc = FakeRPC(snapshot())
+        bucket = rpc.data['rateLimitsByLimitId']['codex']
+        bucket['primary']['usedPercent'] = 20
+        bucket['rateLimitReachedType'] = None
+        rpc.data['ordinaryUsageAllowed'] = True
+        value = {'wait_minutes': 0, 'interval_minutes': 5, 'quota_threshold': 0,
+                 'weekly_reset_days': 1, **self.settings, 'daily_summary_time': ''}
+        argv = ['banked_reset.py', '--state-dir', str(self.path.parent), '--notify', '--demand', '--apply']
+        with patch('sys.argv', argv), patch('banked_reset.RPC', return_value=rpc), patch('banked_reset.notify') as desktop, patch('refill_config.read', return_value=value), patch('refill_notify.events.send', return_value=True) as web, patch('sys.stdout', new_callable=io.StringIO):
+            banked_reset.main()  # Baseline: 80%.
+            desktop.reset_mock()  # Ignore the separate banked-expiry reminders.
+            bucket['primary']['usedPercent'] = 0
+            banked_reset.main()  # External top-up: 100%.
+            desktop.assert_called_once_with(QUOTA_INCREASE_MESSAGE)
+            self.assertEqual(web.call_args.args[2], 'quota_increased')
+            self.assertEqual(rpc.consumes(), [])
+            desktop.reset_mock()
+            web.reset_mock()
+            bucket['primary']['usedPercent'] = 100
+            bucket['rateLimitReachedType'] = 'rate_limit_reached'
+            banked_reset.main()  # Refill redeems and records its post-reset baseline.
+            self.assertEqual(len(rpc.consumes()), 1)
+            self.assertEqual(json.loads(self.path.read_text())['quotaObservation']['remaining'], 100)
+            desktop.reset_mock()
+            web.reset_mock()
+            banked_reset.main()
+            desktop.assert_not_called()
+            web.assert_not_called()

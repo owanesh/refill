@@ -119,7 +119,9 @@ flowchart TD
 
 | Command | Behavior |
 | --- | --- |
-| `refill status` | One line: installed, active, installed Git hash, update availability. |
+| `refill status` | One line: installed, active, installed Git hash, stable/nightly channel, update availability. |
+| `refill update` | Install the latest stable `vX.Y.Z` tag, ordered by version number. |
+| `refill update --nightly` | Install the current `main` revision, regardless of release tags. |
 | `refill config [options]` | Show or change the reset policy and check interval. |
 | `refill notify --test` / `--summary` | Test a configured webhook or send a live summary (requires `[notify]`; no reset). |
 | `refill monitor` | Read-only service diagnostics, all policy settings, live usage and banked resets. |
@@ -130,6 +132,16 @@ flowchart TD
 
 Configuration is saved in `~/.local/share/refill/config.json` on both platforms.
 It survives stop/start, reinstalls and updates; `clean` removes it.
+
+Stable updates require a remote `vX.Y.Z` tag; prerelease tags are excluded. If no
+stable tag is available, `refill update` stops without installing from `main`.
+Use `refill update --nightly` for development builds and `refill update` to return
+to the latest stable tag, even if that means installing an older revision.
+`refill status` checks update availability against the channel selected by the
+last successful update. Updates preserve the service's active or stopped state
+and the installed notification extra.
+Installations without a recorded channel show `Channel: unknown` until the first
+successful `refill update` or `refill update --nightly`.
 
 | Option | Default | Meaning |
 | --- | --- | --- |

@@ -1,4 +1,4 @@
-"""Installed Git revision and a read-only check of the remote main branch."""
+"""Installed Git revision and read-only stable/nightly update discovery."""
 import json
 from pathlib import Path
 import re
@@ -36,20 +36,57 @@ def package_version():
         return 'Git revision unknown'
 
 
-def check(root):
+def remote_target(repo, remote, nightly=False):
+    """Resolve a release tag numerically, or main explicitly; peel annotated tags."""
+    pattern = 'refs/heads/main' if nightly else 'refs/tags/v*'
+    output = git(repo, 'ls-remote', '--exit-code', remote, pattern)
+    if not output:
+        raise RuntimeError('Unable to find remote main.' if nightly else
+                           'No stable release tags found or remote unavailable. Expected vX.Y.Z tags.')
+    refs = {}
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', parts[0]):
+            refs[parts[1]] = parts[0]
+    if nightly:
+        revision = refs.get('refs/heads/main')
+        if revision:
+            return {'ref': 'main', 'revision': revision, 'channel': 'nightly'}
+        raise RuntimeError('Remote main could not be identified.')
+    tags = []
+    for ref in refs:
+        match = re.fullmatch(r'refs/tags/(v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))', ref)
+        if match:
+            tags.append((tuple(int(n) for n in match.groups()[1:]), match[1], ref))
+    if not tags:
+        raise RuntimeError('No stable release tags found. Expected vX.Y.Z tags.')
+    _, tag, ref = max(tags)
+    return {'ref': tag, 'revision': refs.get(ref + '^{}', refs[ref]), 'channel': 'stable'}
+
+
+def installed_metadata(root):
     path = Path(root) / '.version.json'
     try:
-        info = json.loads(path.read_text())
+        return json.loads(path.read_text())
     except (OSError, ValueError):
-        info = metadata(root)
+        return metadata(root)
+
+
+def channel(root):
+    value = installed_metadata(root).get('updateChannel')
+    return value if value in ('stable', 'nightly') else 'unknown'
+
+
+def check(root):
+    info = installed_metadata(root)
     revision = info.get('installedHash')
     label = revision[:8] if revision else package_version()
     if not revision or not (info.get('remoteUrl') or (info.get('remoteName') and info.get('sourceRepo'))):
         return label, None
-    output = git(root, 'ls-remote', '--exit-code', info['remoteUrl'], 'refs/heads/main') if info.get('remoteUrl') else git(info['sourceRepo'], 'ls-remote', '--exit-code', info['remoteName'], 'refs/heads/main')
-    if not output:
+    try:
+        target = remote_target(root if info.get('remoteUrl') else info['sourceRepo'],
+                               info.get('remoteUrl') or info['remoteName'],
+                               nightly=info.get('updateChannel') == 'nightly')
+    except RuntimeError:
         return label, None
-    parts = output.split()
-    if len(parts) != 2 or parts[1] != 'refs/heads/main' or not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', parts[0]):
-        return label, None
-    return label, revision != parts[0]
+    return label, revision != target['revision']

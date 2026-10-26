@@ -243,6 +243,8 @@ def main():
             state["lastCheck"] = now
             state["availableCount"] = (snapshot.get("rateLimitResetCredits") or {}).get("availableCount")
             save(state_path, state)
+            from refill_notify.events import quota_increased, quota_after_redemption
+            quota_increased(snapshot, settings, state, state_path, now, enabled=args.notify)
             for credit in (snapshot.get("rateLimitResetCredits") or {}).get("credits") or []:
                 expiry = credit.get("expiresAt")
                 if expiry and 0 < expiry - now < 86400:
@@ -308,6 +310,7 @@ def main():
                     notify("Reset redeemed. Included usage allowed: "
                            + str(after.get("ordinaryUsageAllowed")))
             redemption_key = pending['idempotencyKey']
+            quota_after_redemption(snapshot, after, outcome, settings, state, time.time())
             state.pop("pending", None)
             save(state_path, state)
             if args.notify and outcome in ('reset', 'alreadyRedeemed'):

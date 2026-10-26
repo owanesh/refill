@@ -203,9 +203,9 @@ class CLITests(unittest.TestCase):
         import version_info
         import account_info
         from types import SimpleNamespace
-        with patch.object(cli, 'installed', return_value=True), patch.object(service, 'status_info', return_value={'active': False, 'configured': False, 'exit_code': None}), patch.object(version_info, 'check', return_value=('12345678', False)), patch('sys.argv', ['refill', 'status']), patch('sys.stdout', new_callable=io.StringIO) as out, patch.object(cli.subprocess, 'call') as run:
+        with patch.object(cli, 'installed', return_value=True), patch.object(service, 'status_info', return_value={'active': False, 'configured': False, 'exit_code': None}), patch.object(version_info, 'check', return_value=('12345678', False)), patch.object(version_info, 'channel', return_value='stable'), patch('sys.argv', ['refill', 'status']), patch('sys.stdout', new_callable=io.StringIO) as out, patch.object(cli.subprocess, 'call') as run:
             self.assertEqual(cli.main(), 0)
-            self.assertEqual(out.getvalue(), 'refill | Installed: ✓ | Active: ✗ | v0.1.0 (12345678) | Update available: ✗\n')
+            self.assertEqual(out.getvalue(), 'refill | Installed: ✓ | Active: ✗ | v0.1.1 (12345678) | Channel: stable | Update available: ✗\n')
             run.assert_not_called()
 
     def test_stop_never_calls_reset(self):
@@ -250,6 +250,19 @@ class CLITests(unittest.TestCase):
 
 
 class RenderTests(unittest.TestCase):
+    def test_both_rome_dst_transitions(self):
+        import terminal_ui
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        cases = ((3, 29, 0, 59, '29.03.26 01:59:00 (Europe/Rome, UTC+01:00)'),
+                 (3, 29, 1, 0, '29.03.26 03:00:00 (Europe/Rome, UTC+02:00)'),
+                 (10, 25, 0, 59, '25.10.26 02:59:00 (Europe/Rome, UTC+02:00)'),
+                 (10, 25, 1, 0, '25.10.26 02:00:00 (Europe/Rome, UTC+01:00)'))
+        with patch.object(terminal_ui, 'local_zone', return_value=ZoneInfo('Europe/Rome')):
+            for month, day, hour, minute, expected in cases:
+                moment = datetime(2026, month, day, hour, minute, tzinfo=timezone.utc).timestamp()
+                self.assertEqual(terminal_ui.timestamp(moment), expected)
+
     def test_dates_follow_computer_timezone_and_dst(self):
         import terminal_ui
         from zoneinfo import ZoneInfo
@@ -349,10 +362,10 @@ class VersionTests(unittest.TestCase):
                 return version_info.check(root)
 
     def test_same_hash_has_no_update(self):
-        self.assertEqual(self.check_version('a'*40+'\trefs/heads/main'), ('aaaaaaaa', False))
+        self.assertEqual(self.check_version('a'*40+'\trefs/tags/v0.1.1'), ('aaaaaaaa', False))
 
     def test_different_hash_has_update(self):
-        self.assertEqual(self.check_version('b'*40+'\trefs/heads/main'), ('aaaaaaaa', True))
+        self.assertEqual(self.check_version('b'*40+'\trefs/tags/v0.1.1'), ('aaaaaaaa', True))
 
     def test_unreachable_remote_is_unknown(self):
         self.assertEqual(self.check_version(None), ('aaaaaaaa', None))

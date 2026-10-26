@@ -1,4 +1,4 @@
-"""Update from a pinned remote main snapshot without changing the user's checkout."""
+"""Update from a stable tag or explicit nightly main without changing the user's checkout."""
 import json
 from pathlib import Path
 import shutil
@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 
-from version_info import git, metadata
+from version_info import git, metadata, remote_target
 
 
 def notify_installed():
@@ -14,7 +14,7 @@ def notify_installed():
     return available()
 
 
-def update(root, tool=None):
+def update(root, tool=None, nightly=False):
     root = Path(root)
     try:
         info = json.loads((root / '.version.json').read_text())
@@ -25,16 +25,22 @@ def update(root, tool=None):
     url = info.get('remoteUrl') or (git(source, 'remote', 'get-url', remote) if source and remote else None)
     if not url:
         raise RuntimeError('No Git remote recorded. Configure origin in the source checkout and reinstall refill.')
+    target = remote_target(root, url, nightly=nightly)
     with tempfile.TemporaryDirectory(prefix='refill-update-') as directory:
         checkout = Path(directory) / 'source'
-        subprocess.run(['git', 'clone', '--quiet', '--depth', '1', '--branch', 'main', '--', url, str(checkout)], check=True)
+        subprocess.run(['git', 'clone', '--quiet', '--depth', '1', '--branch', target['ref'], '--', url, str(checkout)], check=True)
         revision = git(checkout, 'rev-parse', '--verify', 'HEAD')
         if not revision:
             raise RuntimeError('Unable to identify the downloaded revision.')
-        if revision == info.get('installedHash'):
+        if revision != target['revision']:
+            raise RuntimeError('Remote revision changed during download; retry the update.')
+        previous_revision = info.get('installedHash')
+        info.update(installedHash=revision, remoteUrl=url, updateChannel=target['channel'],
+                    releaseTag=None if nightly else target['ref'])
+        if revision == previous_revision:
+            (root / '.version.json').write_text(json.dumps(info))
             print(f'refill is up to date ({revision[:8]}).')
             return 0
-        info.update(installedHash=revision, remoteUrl=url)
         return install(checkout, info, tool)
 
 

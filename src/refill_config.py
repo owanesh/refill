@@ -43,7 +43,8 @@ def configure(minutes=None, interval_minutes=None, quota_threshold=None, weekly_
     value = read()
     changes = {'wait_minutes': minutes, 'interval_minutes': interval_minutes,
                'quota_threshold': quota_threshold, 'weekly_reset_days': weekly_reset_days}
-    allowed = {'webhook_url', 'webhook_format', 'summary_prefix', 'daily_summary_time'}
+    allowed = {'webhook_url', 'webhook_format', 'summary_prefix', 'daily_summary_time',
+               'quota_boost'}
     if set(notification_changes) - allowed:
         raise ValueError('Unknown notification setting')
     changes.update(notification_changes)

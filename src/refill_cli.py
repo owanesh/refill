@@ -101,7 +101,8 @@ def main():
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('monitor', help='Check service health, usage and banked resets (read-only)')
     commands.add_parser('status', help='Show whether refill is installed')
-    commands.add_parser('update', help='Check remote main and install the latest version')
+    update_parser = commands.add_parser('update', help='Install the latest stable release tag')
+    update_parser.add_argument('--nightly', action='store_true', help='Install main instead of a stable release tag')
     commands.add_parser('start', help='Install and start automatic redemption')
     commands.add_parser('stop', help='Stop the service; keep the CLI and data')
     commands.add_parser('clean', help='Uninstall refill, including state and logs')
@@ -114,6 +115,8 @@ def main():
     config.add_argument('--webhook-format', choices=['generic', 'discord', 'slack', 'ntfy'])
     config.add_argument('--summary-prefix', help='Personal message before the notification (at most 500 characters)')
     config.add_argument('--daily-summary-time', help='Daily summary local time HH:MM; empty string disables')
+    config.add_argument('--quota-boost', choices=('on', 'off'),
+                        help='Notify on unexpected weekly quota increases (default: off)')
     notifications = commands.add_parser('notify', help='Test web delivery or send a live read-only summary')
     mode = notifications.add_mutually_exclusive_group(required=True)
     mode.add_argument('--test', action='store_true')
@@ -124,19 +127,20 @@ def main():
     if args.command == 'status':
         from service import status_info
         from terminal_ui import color, brand
-        from version_info import check
+        from version_info import check, channel
         ready = installed()
         running = ready and status_info(ROOT)['active']
         revision, update = check(ROOT)
         mark = lambda value: color('✓', '32') if value is True else color('✗', '31') if value is False else color('?', '33')
         print(f'{brand()} | Installed: {mark(ready)} | Active: {mark(running)} | '
-              f'v{__version__} ({revision}) | Update available: {mark(update)}')
+              f'v{__version__} ({revision}) | Channel: {channel(ROOT)} | Update available: {mark(update)}')
         return 0 if ready else 1
     if args.command == 'config':
         from refill_config import configure
         return configure(args.wait_minutes, args.interval_minutes, args.quota_threshold, args.weekly_reset_days,
                          webhook_url=args.webhook_url, webhook_format=args.webhook_format,
-                         summary_prefix=args.summary_prefix, daily_summary_time=args.daily_summary_time)
+                         summary_prefix=args.summary_prefix, daily_summary_time=args.daily_summary_time,
+                         quota_boost=None if args.quota_boost is None else args.quota_boost == 'on')
     if args.command == 'notify':
         from refill_config import read
         from refill_notify import available, send
@@ -162,7 +166,7 @@ def main():
         return 0 if success else 1
     if args.command == 'update':
         from updater import update
-        return update(ROOT, tool=UPDATE_MANAGER() if UPDATE_MANAGER else None)
+        return update(ROOT, tool=UPDATE_MANAGER() if UPDATE_MANAGER else None, nightly=args.nightly)
     if args.command == 'monitor':
         return monitor()
     if args.command == 'clean':
